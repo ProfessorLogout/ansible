@@ -728,6 +728,7 @@ class LinuxHardware(Hardware):
 
         links = self.get_all_device_links()
         device_facts['device_links'] = links
+        sg_inq = self.module.get_bin_path('sg_inq')
 
         for block in block_devs:
             virtual = 1
@@ -756,19 +757,12 @@ class LinuxHardware(Hardware):
             for key in ['vendor', 'model', 'sas_address', 'sas_device_handle']:
                 d[key] = get_file_content(sysdir + "/device/" + key)
 
-            sg_inq = self.module.get_bin_path('sg_inq')
-
-            # we can get NVMe device's serial number from /sys/block/<name>/device/serial
             serial_path = "/sys/block/%s/device/serial" % (block)
-
-            if sg_inq:
+            serial = get_file_content(serial_path)
+            if not serial and sg_inq:
                 serial = self._get_sg_inq_serial(sg_inq, block)
-                if serial:
-                    d['serial'] = serial
-            else:
-                serial = get_file_content(serial_path)
-                if serial:
-                    d['serial'] = serial
+            if serial:
+                d['serial'] = serial
 
             d['removable'] = get_file_content(sysdir + '/removable')
 

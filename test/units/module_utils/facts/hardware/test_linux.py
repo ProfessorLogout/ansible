@@ -195,3 +195,49 @@ class TestFactsLinuxHardwareGetMountFacts(unittest.TestCase):
         lh = linux.LinuxHardware(module=module, load_on_init=False)
         sg_inq_serial = lh._get_sg_inq_serial('/usr/bin/sg_inq', 'nvme0n1')
         self.assertEqual(sg_inq_serial, None)
+
+
+class TestFactsLinuxHardwareGetDeviceFactsSerial(unittest.TestCase):
+
+    def _get_device_facts_serial(self, sysfs_serial, sg_inq_output=None):
+        module = Mock()
+        module.get_bin_path = Mock(side_effect=lambda name: '/usr/bin/sg_inq' if name == 'sg_inq' else None)
+        module.run_command = Mock(return_value=(0, sg_inq_output or '', ''))
+
+        def fake_get_file_content(path, default=None, strip=True):
+            if path.endswith('/device/serial'):
+                return sysfs_serial
+            if path.endswith('/size'):
+                return '0'
+            if 'logical_block_size' in path or 'hw_sector_size' in path:
+                return '512'
+            if path.endswith('/queue/discard_max_hw_bytes'):
+                return '0'
+            return default
+
+        with patch('ansible.module_utils.facts.hardware.linux.os.listdir', return_value=['sda']), \
+             patch('ansible.module_utils.facts.hardware.linux.os.readlink', return_value='sda'), \
+             patch('ansible.module_utils.facts.hardware.linux.get_file_content', side_effect=fake_get_file_content), \
+             patch.object(linux.LinuxHardware, 'get_all_device_links', return_value={
+                 'ids': {}, 'uuids': {}, 'labels': {}, 'masters': {},
+             }), \
+             patch.object(linux.LinuxHardware, 'get_holders'):
+            lh = linux.LinuxHardware(module=module, load_on_init=False)
+            device_facts = lh.get_device_facts()
+
+        return module, device_facts
+
+    def test_get_device_facts_serial_from_sysfs_skips_sg_inq(self):
+        module, device_facts = self._get_device_facts_serial('SYSFS-SERIAL')
+
+        self.assertEqual(device_facts['devices']['sda']['serial'], 'SYSFS-SERIAL')
+        module.run_command.assert_not_called()
+
+    def test_get_device_facts_serial_falls_back_to_sg_inq(self):
+        module, device_facts = self._get_device_facts_serial(
+            None,
+            sg_inq_output='Unit serial number: vol0123456789',
+        )
+
+        self.assertEqual(device_facts['devices']['sda']['serial'], 'vol0123456789')
+        module.run_command.assert_called_once_with(['/usr/bin/sg_inq', '/dev/sda'])
